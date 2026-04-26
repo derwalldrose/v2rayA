@@ -1256,9 +1256,13 @@ export default {
         method: "delete",
         data: {
           touches: this.checkedRows.map((x) => {
+            let sub = this.tableData.subscriptions.findIndex((subscription) =>
+              subscription.servers.some((y) => x === y)
+            );
             return {
               id: x.id,
               _type: x._type,
+              sub: sub === -1 ? null : sub,
             };
           }),
         },
@@ -1391,13 +1395,35 @@ export default {
           queue: false,
         });
       }, 10 * 1200);
-      this.$axios({
-        url: apiRoot + (ping ? "/pingLatency" : "/httpLatency"),
-        params: {
-          whiches: touches,
-        },
-        timeout: 0,
-      })
+      const request = ping
+        ? Promise.resolve("")
+        : this.$axios({
+            url: apiRoot + "/outbound",
+            params: {
+              outbound: this.outbound,
+            },
+          }).then((res) => {
+            if (
+              res.data.code === "SUCCESS" &&
+              res.data.data &&
+              res.data.data.setting &&
+              res.data.data.setting.probeURL
+            ) {
+              return res.data.data.setting.probeURL;
+            }
+            return "";
+          });
+      request
+        .then((testUrl) =>
+          this.$axios({
+            url: apiRoot + (ping ? "/pingLatency" : "/httpLatency"),
+            params: {
+              whiches: touches,
+              ...(ping || !testUrl ? {} : { testUrl }),
+            },
+            timeout: 0,
+          })
+        )
         .then((res) => {
           handleResponse(
             res,
@@ -1432,10 +1458,16 @@ export default {
       this.checkedRows = [];
     },
     isCheckedRowsDeletable() {
-      // CONST.SubscriptionServerType is not deletable
+      // Only rows in the SUBSCRIPTION and SERVER tabs are deletable here.
+      // Subscription-server rows in per-subscription tabs are not deletable by
+      // the toolbar because deleteSelectedServers() targets /touch deletion of
+      // top-level subscriptions/servers, not nested subscription members.
       return (
         this.checkedRows.length > 0 &&
-        this.checkedRows.every((x) => x._type !== CONST.SubscriptionServerType)
+        this.checkedRows.every(
+          (x) =>
+            x._type === CONST.ServerType || x._type === CONST.SubscriptionType
+        )
       );
     },
     isCheckedRowsPingable() {

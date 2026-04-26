@@ -19,10 +19,16 @@
       </b-field>
       <b-field label="Type" label-position="on-border">
         <b-select v-model="setting.type" expanded>
+          <option value="random">random</option>
+          <option value="roundrobin">roundRobin</option>
           <option value="leastping">
             {{ $t("setting.options.leastPing") }}
           </option>
+          <option value="leastload">leastLoad</option>
         </b-select>
+      </b-field>
+      <b-field label="FallbackTag" label-position="on-border">
+        <b-input v-model="setting.fallbackTag" expanded />
       </b-field>
     </section>
     <footer class="modal-card-foot flex-end">

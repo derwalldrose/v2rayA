@@ -107,6 +107,20 @@ func ParseSSURL(u string) (data *Shadowsocks, err error) {
 	return v, nil
 }
 
+func getPluginMux(info PriorInfo) *coreObj.Mux {
+	if !info.MuxEnabled {
+		return nil
+	}
+	concurrency := info.MuxConcurrency
+	if concurrency < 1 {
+		concurrency = 1
+	}
+	return &coreObj.Mux{
+		Enabled:     true,
+		Concurrency: concurrency,
+	}
+}
+
 func (s *Shadowsocks) ConfigurationMC(info PriorInfo) (c Configuration, err error) {
 	v2rayServer := coreObj.Server{
 		Address:  s.Server,
@@ -183,10 +197,7 @@ func (s *Shadowsocks) ConfigurationMC(info PriorInfo) (c Configuration, err erro
 				Redirect:       net.JoinHostPort(s.Server, strconv.Itoa(s.Port)),
 			},
 			StreamSettings: streamSettings,
-			Mux: &coreObj.Mux{
-				Enabled:     true,
-				Concurrency: 1,
-			},
+			Mux:            getPluginMux(info),
 		})
 	case "":
 		// no plugin
@@ -289,10 +300,7 @@ func (s *Shadowsocks) ConfigurationMT(info PriorInfo) (c Configuration, err erro
 			// SNI
 			v2StreamSettings.TLSSettings.ServerName = host
 		}
-		v2Mux = &coreObj.Mux{
-			Enabled:     true,
-			Concurrency: 1,
-		}
+		v2Mux = getPluginMux(info)
 		switch s.Plugin.Opts.Obfs {
 		case "quic":
 			return c, fmt.Errorf("quic is not yet supported")
@@ -419,29 +427,31 @@ type Sip003Opts struct {
 
 func ParseSip003Opts(opts string) Sip003Opts {
 	var sip003Opts Sip003Opts
-	fields := strings.Split(opts, ";")
-	for i := range fields {
-		a := strings.Split(fields[i], "=")
-		if len(a) == 1 {
-			// to avoid panic
-			a = append(a, "")
-		}
-		switch a[0] {
-		case "tls":
-			sip003Opts.Tls = "tls"
-		case "obfs", "mode":
-			sip003Opts.Obfs = a[1]
-		case "obfs-path", "obfs-uri", "path":
-			if !strings.HasPrefix(a[1], "/") {
-				a[1] += "/"
+		fields := strings.Split(opts, ";")
+		for i := range fields {
+			a := strings.SplitN(fields[i], "=", 2)
+			if len(a) == 1 {
+				// to avoid panic
+				a = append(a, "")
 			}
-			sip003Opts.Path = a[1]
-		case "obfs-host", "host":
-			sip003Opts.Host = a[1]
-		case "impl":
-			sip003Opts.Impl = a[1]
+			key := a[0]
+			val := strings.ReplaceAll(a[1], `\=`, `=`)
+			switch key {
+			case "tls":
+				sip003Opts.Tls = "tls"
+			case "obfs", "mode":
+				sip003Opts.Obfs = val
+			case "obfs-path", "obfs-uri", "path":
+				if val != "" && !strings.HasPrefix(val, "/") {
+					val = "/" + val
+				}
+				sip003Opts.Path = val
+			case "obfs-host", "host":
+				sip003Opts.Host = val
+			case "impl":
+				sip003Opts.Impl = val
+			}
 		}
-	}
 	return sip003Opts
 }
 func ParseSip003(plugin string) Sip003 {

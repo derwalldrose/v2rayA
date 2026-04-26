@@ -1,0 +1,56 @@
+FROM mzz2017/git:alpine AS version
+WORKDIR /build
+ADD .git ./.git
+RUN git describe --abbrev=0 --tags | tee ./version
+
+FROM node:20-alpine AS builder-web
+ADD gui /build/gui
+WORKDIR /build/gui
+RUN sed -i 's|https://dl-cdn.alpinelinux.org/alpine|https://mirrors.tuna.tsinghua.edu.cn/alpine|g' /etc/apk/repositories \
+    && yarn config set registry https://registry.npmmirror.com \
+    && yarn config set network-timeout 600000 \
+    && yarn config set sass_binary_site https://npmmirror.com/mirrors/node-sass \
+    && yarn config set electron_mirror https://npmmirror.com/mirrors/electron/ \
+    && yarn cache clean
+RUN sh -lc 'yarn install --registry=https://registry.npmmirror.com || yarn install --registry=https://registry.npmmirror.com' \
+    && yarn build
+
+FROM golang:alpine AS builder
+ADD service /build/service
+WORKDIR /build/service
+ENV GO111MODULE=on
+ENV GOPROXY=https://goproxy.cn
+RUN sed -i 's|https://dl-cdn.alpinelinux.org/alpine|https://mirrors.tuna.tsinghua.edu.cn/alpine|g' /etc/apk/repositories
+COPY --from=version /build/version ./
+COPY --from=builder-web /build/web server/router/web
+RUN export VERSION=$(cat ./version) && CGO_ENABLED=0 go build -ldflags="-X github.com/v2rayA/v2rayA/conf.Version=${VERSION:1} -s -w" -o v2raya .
+
+FROM alpine:3.22
+LABEL org.opencontainers.image.source=https://github.com/v2rayA/v2rayA
+ENV V2RAYA_V2RAY_BIN=/usr/local/bin/xray
+WORKDIR /tmp
+RUN sed -i 's|https://dl-cdn.alpinelinux.org/alpine|https://mirrors.tuna.tsinghua.edu.cn/alpine|g' /etc/apk/repositories \
+    && apk add --no-cache bash ca-certificates curl iptables ip6tables iptables-legacy nftables tzdata unzip wget
+RUN arch="$(apk --print-arch)"; \
+    case "$arch" in \
+      x86_64) v2arch="64"; xarch="64" ;; \
+      aarch64) v2arch="arm64-v8a"; xarch="arm64-v8a" ;; \
+      armv7) v2arch="arm32-v7a"; xarch="arm32-v7a" ;; \
+      riscv64) v2arch="riscv64"; xarch="riscv64" ;; \
+      *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
+    esac; \
+    wget -O /tmp/v2ray.zip "https://github.com/v2fly/v2ray-core/releases/latest/download/v2ray-linux-${v2arch}.zip"; \
+    unzip /tmp/v2ray.zip -d /tmp/v2ray; \
+    install -m 0755 /tmp/v2ray/v2ray /usr/local/bin/v2ray; \
+    mkdir -p /usr/local/share/v2ray; \
+    for f in geoip.dat geosite.dat; do if [ -f "/tmp/v2ray/$f" ]; then install -m 0644 "/tmp/v2ray/$f" "/usr/local/share/v2ray/$f"; fi; done; \
+    wget -O /tmp/xray.zip "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-${xarch}.zip"; \
+    unzip /tmp/xray.zip -d /tmp/xray; \
+    install -m 0755 /tmp/xray/xray /usr/local/bin/xray; \
+    mkdir -p /usr/local/share/xray; \
+    for f in geoip.dat geosite.dat; do if [ -f "/tmp/xray/$f" ]; then install -m 0644 "/tmp/xray/$f" "/usr/local/share/xray/$f"; fi; done; \
+    rm -rf /tmp/*
+COPY --from=builder /build/service/v2raya /usr/bin/
+EXPOSE 2017
+VOLUME /etc/v2raya
+ENTRYPOINT ["v2raya"]

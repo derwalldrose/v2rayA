@@ -16,17 +16,40 @@ type Observatory struct {
 	ProbeURL        string   `json:"probeURL,omitempty"`
 	ProbeInterval   string   `json:"probeInterval,omitempty"`
 }
+type BurstObservatory struct {
+	SubjectSelector []string   `json:"subjectSelector"`
+	PingConfig      PingConfig `json:"pingConfig"`
+}
+type PingConfig struct {
+	Destination   string `json:"destination,omitempty"`
+	Connectivity  string `json:"connectivity,omitempty"`
+	Interval      string `json:"interval,omitempty"`
+	SamplingCount int    `json:"samplingCount,omitempty"`
+	Timeout       string `json:"timeout,omitempty"`
+	HTTPMethod    string `json:"httpMethod,omitempty"`
+}
 type Balancer struct {
-	Tag      string           `json:"tag"`
-	Selector []string         `json:"selector"`
-	Strategy BalancerStrategy `json:"strategy"`
+	Tag         string           `json:"tag"`
+	Selector    []string         `json:"selector"`
+	Strategy    BalancerStrategy `json:"strategy"`
+	FallbackTag string           `json:"fallbackTag,omitempty"`
 }
 type BalancerStrategy struct {
 	Type     string            `json:"type"`
 	Settings *StrategySettings `json:"settings,omitempty"`
 }
+type StrategyCost struct {
+	Regexp bool    `json:"regexp,omitempty"`
+	Match  string  `json:"match,omitempty"`
+	Value  float64 `json:"value,omitempty"`
+}
 type StrategySettings struct {
-	ObserverTag string `json:"observerTag"`
+	ObserverTag string         `json:"observerTag,omitempty"`
+	Expected    *int           `json:"expected,omitempty"`
+	MaxRTT      string         `json:"maxRTT,omitempty"`
+	Tolerance   *float64       `json:"tolerance,omitempty"`
+	Baselines   []string       `json:"baselines,omitempty"`
+	Costs       []StrategyCost `json:"costs,omitempty"`
 }
 type FakeDns struct {
 	IpPool   string `json:"ipPool"`
@@ -128,6 +151,7 @@ type TLSSettings struct {
 	PinnedPeerCertificateChainSha256 string        `json:"pinnedPeerCertificateChainSha256,omitempty"`
 	Certificates                     []Certificate `json:"certificates,omitempty"`
 	Fingerprint                      string        `json:"fingerprint,omitempty"`
+	EchConfigList                    string        `json:"echConfigList,omitempty"`
 }
 type Certificate struct {
 	CertificateFile string `json:"certificateFile"`

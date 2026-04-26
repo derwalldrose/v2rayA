@@ -44,6 +44,7 @@ type V2Ray struct {
 	Path          string `json:"path"`
 	TLS           string `json:"tls"`
 	Fingerprint   string `json:"fingerprint,omitempty"`
+	EchConfigList string `json:"echConfigList,omitempty"`
 	PublicKey     string `json:"pbk,omitempty"`
 	ShortId       string `json:"sid,omitempty"`
 	SpiderX       string `json:"spx,omitempty"`
@@ -71,26 +72,35 @@ func ParseVlessURL(vless string) (data *V2Ray, err error) {
 	if err != nil {
 		return nil, err
 	}
+	q := u.Query()
+	echConfigList := q.Get("echConfigList")
+	if echConfigList == "" {
+		echConfigList = q.Get("ech")
+	}
+	allowInsecureValue := q.Get("allowInsecure")
+	insecureValue := q.Get("insecure")
+	allowInsecure := allowInsecureValue == "true" || allowInsecureValue == "1" || insecureValue == "true" || insecureValue == "1"
 	data = &V2Ray{
 		Ps:            u.Fragment,
 		Add:           u.Hostname(),
 		Port:          u.Port(),
 		ID:            u.User.String(),
-		Aid:           u.Query().Get("aid"),
-		Net:           u.Query().Get("type"),
-		Type:          u.Query().Get("headerType"),
-		Host:          u.Query().Get("host"),
-		SNI:           u.Query().Get("sni"),
-		Path:          u.Query().Get("path"),
-		TLS:           u.Query().Get("security"),
-		Fingerprint:   u.Query().Get("fp"),
-		PublicKey:     u.Query().Get("pbk"),
-		ShortId:       u.Query().Get("sid"),
-		SpiderX:       u.Query().Get("spx"),
-		Flow:          u.Query().Get("flow"),
-		Alpn:          u.Query().Get("alpn"),
-		AllowInsecure: u.Query().Get("allowInsecure") == "true",
-		Key:           u.Query().Get("key"),
+		Aid:           q.Get("aid"),
+		Net:           q.Get("type"),
+		Type:          q.Get("headerType"),
+		Host:          q.Get("host"),
+		SNI:           q.Get("sni"),
+		Path:          q.Get("path"),
+		TLS:           q.Get("security"),
+		Fingerprint:   q.Get("fp"),
+		EchConfigList: echConfigList,
+		PublicKey:     q.Get("pbk"),
+		ShortId:       q.Get("sid"),
+		SpiderX:       q.Get("spx"),
+		Flow:          q.Get("flow"),
+		Alpn:          q.Get("alpn"),
+		AllowInsecure: allowInsecure,
+		Key:           q.Get("key"),
 		V:             vless,
 		Protocol:      "vless",
 	}
@@ -274,14 +284,14 @@ func (v *V2Ray) Configuration(info PriorInfo) (c Configuration, err error) {
 					},
 				},
 			}
-		// if network == "tcp" {
-		// 	tcpSetting := coreObj.TCPSettings{
-		// 		Header: coreObj.TCPHeader{
-		// 			Type: "none",
-		// 		},
-		// 	}
-		// 	core.StreamSettings.TCPSettings = &tcpSetting
-		// }
+			// if network == "tcp" {
+			// 	tcpSetting := coreObj.TCPSettings{
+			// 		Header: coreObj.TCPHeader{
+			// 			Type: "none",
+			// 		},
+			// 	}
+			// 	core.StreamSettings.TCPSettings = &tcpSetting
+			// }
 		}
 		// 根据传输协议(network)修改streamSettings
 		//TODO: QUIC
@@ -414,6 +424,7 @@ func (v *V2Ray) Configuration(info PriorInfo) (c Configuration, err error) {
 			}
 			// uTLS fingerprint
 			core.StreamSettings.TLSSettings.Fingerprint = v.Fingerprint
+			core.StreamSettings.TLSSettings.EchConfigList = v.EchConfigList
 		} else if strings.ToLower(v.TLS) == "xtls" {
 			core.StreamSettings.Security = "xtls"
 			core.StreamSettings.XTLSSettings = &coreObj.TLSSettings{}
@@ -493,6 +504,7 @@ func (v *V2Ray) ExportToURL() string {
 			setValue(&query, "alpn", v.Alpn)
 			setValue(&query, "allowInsecure", strconv.FormatBool(v.AllowInsecure))
 			setValue(&query, "fp", v.Fingerprint)
+			setValue(&query, "echConfigList", v.EchConfigList)
 			if v.TLS == "reality" {
 				setValue(&query, "pbk", v.PublicKey)
 				setValue(&query, "sid", v.ShortId)

@@ -32,10 +32,12 @@ type Configuration struct {
 }
 
 type PriorInfo struct {
-	Variant     where.Variant
-	CoreVersion string
-	Tag         string
-	PluginPort  int
+	Variant        where.Variant
+	CoreVersion    string
+	Tag            string
+	PluginPort     int
+	MuxEnabled     bool
+	MuxConcurrency int
 }
 
 func (info *PriorInfo) PluginObj() coreObj.OutboundObject {

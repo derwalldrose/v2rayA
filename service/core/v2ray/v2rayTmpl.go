@@ -49,6 +49,8 @@ type Template struct {
 	DNS              *coreObj.DNS              `json:"dns,omitempty"`
 	FakeDns          *coreObj.FakeDns          `json:"fakedns,omitempty"`
 	MultiObservatory *coreObj.MultiObservatory `json:"multiObservatory,omitempty"`
+	Observatory      *coreObj.ObservatoryItem  `json:"observatory,omitempty"`
+	BurstObservatory *coreObj.BurstObservatory `json:"burstObservatory,omitempty"`
 	API              *coreObj.APIObject        `json:"api,omitempty"`
 
 	Variant               where.Variant       `json:"-"`
@@ -1331,10 +1333,12 @@ func (t *Template) resolveOutbounds(
 				// pure outbound
 				outboundTag := sInfo.OutboundName
 				c, err := obj.Configuration(serverObj.PriorInfo{
-					Variant:     t.Variant,
-					CoreVersion: t.CoreVersion,
-					Tag:         outboundTag,
-					PluginPort:  sInfo.PluginPort,
+					Variant:        t.Variant,
+					CoreVersion:    t.CoreVersion,
+					Tag:            outboundTag,
+					PluginPort:     sInfo.PluginPort,
+					MuxEnabled:     t.Setting.MuxOn == configure.Yes,
+					MuxConcurrency: t.Setting.Mux,
 				})
 				if err != nil {
 					return nil, nil, err
@@ -1367,10 +1371,12 @@ func (t *Template) resolveOutbounds(
 			// the v2ray outbound is shared by balancers
 			outboundTag := GroupWrapper(obj.GetName())
 			c, err := obj.Configuration(serverObj.PriorInfo{
-				Variant:     t.Variant,
-				CoreVersion: t.CoreVersion,
-				Tag:         outboundTag,
-				PluginPort:  balancerPluginPort,
+				Variant:        t.Variant,
+				CoreVersion:    t.CoreVersion,
+				Tag:            outboundTag,
+				PluginPort:     balancerPluginPort,
+				MuxEnabled:     t.Setting.MuxOn == configure.Yes,
+				MuxConcurrency: t.Setting.Mux,
 			})
 			if err != nil {
 				return nil, nil, err
@@ -1441,6 +1447,97 @@ func (t *Template) resolveOutbounds(
 	return supportUDP, outboundTags, nil
 }
 
+func (t *Template) addLeastPingObservatory(outbound string, selector []string, probeURL string, interval time.Duration) {
+	if t.Variant == where.Xray {
+		if t.Observatory == nil {
+			t.Observatory = &coreObj.ObservatoryItem{
+				Tag: "observatory",
+				Settings: coreObj.Observatory{
+					SubjectSelector: append([]string{}, selector...),
+					ProbeURL:        probeURL,
+					ProbeInterval:   interval.String(),
+				},
+			}
+			return
+		}
+		t.Observatory.Settings.SubjectSelector = append(t.Observatory.Settings.SubjectSelector, selector...)
+		return
+	}
+	if t.MultiObservatory == nil {
+		t.MultiObservatory = &coreObj.MultiObservatory{}
+	}
+	t.MultiObservatory.Observers = append(t.MultiObservatory.Observers, coreObj.ObservatoryItem{
+		Tag: outbound,
+		Settings: coreObj.Observatory{
+			SubjectSelector: selector,
+			ProbeURL:        probeURL,
+			ProbeInterval:   interval.String(),
+		},
+	})
+}
+
+func (t *Template) addLeastLoadBurstObservatory(selector []string, probeURL string, interval time.Duration) {
+	if t.BurstObservatory == nil {
+		t.BurstObservatory = &coreObj.BurstObservatory{
+			SubjectSelector: append([]string{}, selector...),
+			PingConfig: coreObj.PingConfig{
+				Destination:   probeURL,
+				Interval:      interval.String(),
+				SamplingCount: 10,
+				Timeout:       "5s",
+				HTTPMethod:    "GET",
+			},
+		}
+		return
+	}
+	t.BurstObservatory.SubjectSelector = append(t.BurstObservatory.SubjectSelector, selector...)
+}
+
+func canonicalBalancerStrategy(variant where.Variant, strategy configure.ObservatoryType) (name string, useObserverTag bool, ok bool) {
+	switch variant {
+	case where.Xray:
+		switch strategy {
+		case configure.Random:
+			return "random", false, true
+		case configure.RoundRobin:
+			return "roundRobin", false, true
+		case configure.LeastPing:
+			return "leastPing", false, true
+		case configure.LeastLoad:
+			return "leastLoad", false, true
+		default:
+			return "", false, false
+		}
+	default:
+		switch strategy {
+		case configure.Random:
+			return "random", false, true
+		case configure.LeastPing:
+			return "leastPing", true, true
+		default:
+			return "random", false, true
+		}
+	}
+}
+
+func (t *Template) attachObservatoryService(services []string, port int) []string {
+	if t.MultiObservatory == nil && t.Observatory == nil {
+		return services
+	}
+	if t.Variant != where.V2ray {
+		return services
+	}
+	services = append(services, "ObservatoryService")
+	var observatoryTags []string
+	for name, isGroup := range t.outNames() {
+		if isGroup {
+			observatoryTags = append(observatoryTags, name)
+		}
+	}
+	t.ApiCloses = append(t.ApiCloses, ObservatoryProducer(port, observatoryTags))
+	return services
+}
+
 func (t *Template) SetAPI(serverData *ServerData) (port int, err error) {
 	// find a valid port
 	config := configure.GetPortsNotNil()
@@ -1481,47 +1578,62 @@ func (t *Template) SetAPI(serverData *ServerData) (port int, err error) {
 				selector = append(selector, GroupWrapper(vi.GetName()))
 			}
 
+			balancerType, useObserverTag, ok := canonicalBalancerStrategy(t.Variant, strategy)
+			if !ok {
+				log.Warn("unsupported balancer strategy %q; fallback to random", strategy.String())
+				balancerType = "random"
+				useObserverTag = false
+			}
+			if t.Variant == where.V2ray && (strategy == configure.RoundRobin || strategy == configure.LeastLoad) {
+				log.Warn("strategy %q is not natively supported in V2Ray path; fallback to random", strategy.String())
+				balancerType = "random"
+				useObserverTag = false
+			}
+			var strategySettings *coreObj.StrategySettings
+			if useObserverTag {
+				strategySettings = &coreObj.StrategySettings{ObserverTag: outbound}
+			}
+			fallbackTag := serverData.OutboundName2Setting[outbound].FallbackTag
+			if t.Variant == where.Xray && fallbackTag == "" && (strategy == configure.Random || strategy == configure.RoundRobin) {
+				fallbackTag = "block"
+			}
 			t.Routing.Balancers = append(t.Routing.Balancers, coreObj.Balancer{
-				Tag:      outbound,
-				Selector: selector,
+				Tag:         outbound,
+				Selector:    selector,
+				FallbackTag: fallbackTag,
 				Strategy: coreObj.BalancerStrategy{
-					Type: strategy.String(),
-					Settings: &coreObj.StrategySettings{
-						ObserverTag: outbound,
-					},
+					Type:     balancerType,
+					Settings: strategySettings,
 				},
 			})
 
-			if strings.ToLower(strategy.String()) == "leastping" {
-				if t.MultiObservatory == nil {
-					t.MultiObservatory = &coreObj.MultiObservatory{}
+			probeUrl := serverData.OutboundName2Setting[outbound].ProbeURL
+			if _, err := url.Parse(probeUrl); err != nil {
+				log.Warn("observatory: %v", err)
+				probeUrl = "https://gstatic.com/generate_204"
+			}
+			switch strategy {
+			case configure.LeastPing:
+				t.addLeastPingObservatory(outbound, selector, probeUrl, interval)
+			case configure.LeastLoad:
+				if t.Variant == where.Xray {
+					t.addLeastLoadBurstObservatory(selector, probeUrl, interval)
 				}
-				probeUrl := serverData.OutboundName2Setting[outbound].ProbeURL
-				if _, err := url.Parse(probeUrl); err != nil {
-					log.Warn("observatory: %v", err)
-					probeUrl = "https://gstatic.com/generate_204"
+			case configure.RoundRobin:
+				if t.Variant == where.Xray {
+					// RoundRobin can consult Xray observatory when fallbackTag is set.
+					// Reuse observatory so Xray avoids blindly rotating across dead nodes.
+					t.addLeastPingObservatory(outbound, selector, probeUrl, interval)
 				}
-				t.MultiObservatory.Observers = append(t.MultiObservatory.Observers, coreObj.ObservatoryItem{
-					Tag: outbound,
-					Settings: coreObj.Observatory{
-						SubjectSelector: selector,
-						ProbeURL:        probeUrl,
-						ProbeInterval:   interval.String(),
-					},
-				})
+			case configure.Random:
+				if t.Variant == where.Xray {
+					// Random can consult Xray observatory when fallbackTag is set.
+					// Reuse observatory so Xray avoids blindly picking dead nodes.
+					t.addLeastPingObservatory(outbound, selector, probeUrl, interval)
+				}
 			}
 		}
-		if t.MultiObservatory != nil {
-			services = append(services, "ObservatoryService")
-
-			var observatoryTags []string
-			for name, isGroup := range t.outNames() {
-				if isGroup {
-					observatoryTags = append(observatoryTags, name)
-				}
-			}
-			t.ApiCloses = append(t.ApiCloses, ObservatoryProducer(port, observatoryTags))
-		}
+		services = t.attachObservatoryService(services, port)
 	}
 	t.API = &coreObj.APIObject{
 		Tag:      "api-out",
@@ -1834,10 +1946,12 @@ func (t *Template) InsertMappingOutbound(o serverObj.ServerObj, inboundPort stri
 		t.Variant, t.CoreVersion, _ = where.GetV2rayServiceVersion()
 	}
 	c, err := o.Configuration(serverObj.PriorInfo{
-		Variant:     t.Variant,
-		CoreVersion: t.CoreVersion,
-		Tag:         "outbound" + inboundPort,
-		PluginPort:  pluginPort,
+		Variant:        t.Variant,
+		CoreVersion:    t.CoreVersion,
+		Tag:            "outbound" + inboundPort,
+		PluginPort:     pluginPort,
+		MuxEnabled:     t.Setting.MuxOn == configure.Yes,
+		MuxConcurrency: t.Setting.Mux,
 	})
 	if err != nil {
 		return err

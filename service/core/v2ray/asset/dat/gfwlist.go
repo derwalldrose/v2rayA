@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tidwall/gjson"
 	"github.com/v2rayA/v2rayA/common/files"
 	"github.com/v2rayA/v2rayA/common/httpClient"
 	"github.com/v2rayA/v2rayA/core/v2ray"
@@ -28,27 +27,43 @@ type GFWList struct {
 var g GFWList
 var gMutex sync.Mutex
 
+const latestGeoSiteURL = "https://raw.githubusercontent.com/v2rayA/dist-v2ray-rules-dat/refs/heads/master/geosite.dat"
+
 func GetRemoteGFWListUpdateTime(c *http.Client) (gfwlist GFWList, err error) {
 	gMutex.Lock()
 	defer gMutex.Unlock()
 	if !g.UpdateTime.IsZero() {
 		return g, nil
 	}
-	resp, err := httpClient.HttpGetUsingSpecificClient(c, "https://api.github.com/repos/v2rayA/dist-v2ray-rules-dat/tags")
+	resp, err := httpClient.HttpGetUsingSpecificClient(c, latestGeoSiteURL)
 	if err != nil {
 		err = fmt.Errorf("failed to get latest version of GFWList: %w", err)
 		return
 	}
-	b, _ := io.ReadAll(resp.Body)
 	defer resp.Body.Close()
-	tag := gjson.GetBytes(b, "0.name").Str
-	t, err := time.Parse("200601021504", tag)
-	if err != nil {
-		err = fmt.Errorf("failed to get latest version of GFWList: fail in getting commit date of latest tag: %w", err)
-		return
+	lastModified := resp.Header.Get("Last-Modified")
+	if lastModified != "" {
+		t, parseErr := http.ParseTime(lastModified)
+		if parseErr == nil {
+			g.Tag = lastModified
+			g.UpdateTime = t
+			return g, nil
+		}
+		log.Warn("GetRemoteGFWListUpdateTime: fail in parsing Last-Modified, fallback to Date header: %v", parseErr)
 	}
-	g.Tag = tag
-	g.UpdateTime = t
+	dateHeader := resp.Header.Get("Date")
+	if dateHeader != "" {
+		t, parseErr := http.ParseTime(dateHeader)
+		if parseErr == nil {
+			g.Tag = dateHeader
+			g.UpdateTime = t
+			return g, nil
+		}
+		log.Warn("GetRemoteGFWListUpdateTime: fail in parsing Date header, fallback to current time: %v", parseErr)
+	}
+	now := time.Now().UTC()
+	g.Tag = now.Format(http.TimeFormat)
+	g.UpdateTime = now
 	return g, nil
 }
 func IsGFWListUpdate() (update bool, remoteTime time.Time, err error) {
@@ -135,12 +150,12 @@ func UpdateLocalGFWList() (localGFWListVersionAfterUpdate string, err error) {
 	if err != nil {
 		return "", err
 	}
-	u := fmt.Sprintf(`https://github.com/v2rayA/dist-v2ray-rules-dat/raw/%v/geosite.dat`, gfwlist.Tag)
+	u := latestGeoSiteURL
 	if err = asset.Download(u, pathSiteDat+".new"); err != nil {
 		log.Warn("UpdateLocalGFWList: %v", err)
 		return
 	}
-	u2 := fmt.Sprintf(`https://github.com/v2rayA/dist-v2ray-rules-dat/raw/%v/geosite.dat.sha256sum`, gfwlist.Tag)
+	u2 := latestGeoSiteURL + ".sha256sum"
 	siteDatSha256, err := httpGet(u2)
 	if err != nil {
 		err = fmt.Errorf("%w: %v", FailCheckSha, err)

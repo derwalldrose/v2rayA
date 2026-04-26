@@ -88,6 +88,18 @@ v-show="v2ray.tls === 'tls' || v2ray.tls === 'reality'" label="uTLS fingerprint"
             </b-select>
           </b-field>
           <b-field
+            v-show="variant() === 'xray' && v2ray.tls === 'tls'"
+            label="ECHConfigList"
+            label-position="on-border"
+          >
+            <b-input
+              ref="v2ray_ech_config_list"
+              v-model="v2ray.echConfigList"
+              placeholder="cloudflare-ech.com+https://dns.alidns.com/dns-query"
+              expanded
+            />
+          </b-field>
+          <b-field
             v-show="v2ray.tls === 'tls'"
             label="Alpn"
             label-position="on-border"
@@ -734,6 +746,7 @@ export default {
       tls: "none",
       quicSecurity: "none",
       fp: "",
+      echConfigList: "",
       pbk: "",
       sid: "",
       spx: "",
@@ -943,6 +956,7 @@ export default {
           tls: u.params.security || "none",
           quicSecurity: u.params.quicSecurity || "none",
           fp: u.params.fp || "",
+          echConfigList: u.params.echConfigList || "",
           pbk: u.params.pbk || "",
           sid: u.params.sid || "",
           spx: u.params.spx || "",
@@ -1007,6 +1021,10 @@ export default {
           for (let i = 1; i < arr.length; i++) {
             //"obfs-local;obfs=tls;obfs-host=4cb6a43103.wns.windows.com"
             const a = arr[i].split("=");
+            if (a.length > 2) {
+              a[1] = a.slice(1).join("=");
+              a.splice(2);
+            }
             switch (a[0]) {
               case "obfs":
                 obj.obfs = a[1];
@@ -1169,6 +1187,7 @@ export default {
             flow: srcObj.flow || "",
             security: srcObj.tls,
             fp: srcObj.fp || "",
+            echConfigList: srcObj.echConfigList || "",
             path: srcObj.path,
             host: srcObj.host,
             headerType: srcObj.type,

@@ -84,19 +84,12 @@ func checkSupport(toAppend []*configure.Which) (err error) {
 	if err = checkAssetsExist(setting); err != nil {
 		return err
 	}
-	variant, err := service.CheckV5()
-	if err != nil {
-		return err
-	}
-	if variant != where.V2ray {
-		outbound2cnt := map[string]int{}
-		for _, wt := range append(toAppend, configure.GetConnectedServers().Get()...) {
-			outbound2cnt[wt.Outbound]++
-			if outbound2cnt[wt.Outbound] > 1 {
-				return fmt.Errorf("cannot select multiple servers: %w", V2OnlyFeatureError)
-			}
-		}
-	}
+	// Both v2ray-core and xray-core support load balancing in this codebase.
+	// Keep a lightweight variant probe for compatibility, but do not reject
+	// multiple selected servers for non-v2ray variants.
+	_, _, _ = where.GetV2rayServiceVersion()
+	_ = toAppend
+	_ = service.CheckV5
 	return nil
 }
 

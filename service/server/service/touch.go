@@ -13,7 +13,7 @@ func DeleteWhich(ws []*configure.Which) (err error) {
 	data.SortSameTypeReverse()
 	touches := data.Get()
 	cssRaw := configure.GetConnectedServers()
-	cssAfter := cssRaw.Get()
+	cssAfter := append([]*configure.Which(nil), cssRaw.Get()...)
 	subscriptionsIndexes := make([]int, 0, len(ws))
 	serversIndexes := make([]int, 0, len(ws))
 	bDeletedSubscription := false
@@ -23,9 +23,8 @@ func DeleteWhich(ws []*configure.Which) (err error) {
 		switch v.TYPE {
 		case configure.SubscriptionType: //这里删的是某个订阅
 			//检查现在连接的结点是否在该订阅中，是的话断开连接
-			css := cssRaw.Get()
-			for i := len(css) - 1; i >= 0; i-- {
-				cs := css[i]
+			for i := len(cssAfter) - 1; i >= 0; i-- {
+				cs := cssAfter[i]
 				if cs != nil && cs.TYPE == configure.SubscriptionServerType {
 					if ind == cs.Sub {
 						err = Disconnect(*cs, false)
@@ -42,9 +41,8 @@ func DeleteWhich(ws []*configure.Which) (err error) {
 			bDeletedSubscription = true
 		case configure.ServerType:
 			//检查现在连接的结点是否是该服务器，是的话断开连接
-			css := cssRaw.Get()
-			for i := len(css) - 1; i >= 0; i-- {
-				cs := css[i]
+			for i := len(cssAfter) - 1; i >= 0; i-- {
+				cs := cssAfter[i]
 				if cs != nil && cs.TYPE == configure.ServerType {
 					if v.ID == cs.ID {
 						err = Disconnect(*cs, false)
